@@ -1,0 +1,126 @@
+# =========================
+
+# Python
+
+# =========================
+
+**pycache**/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+
+venv/
+.venv/
+env/
+ENV/
+
+# Python Packaging
+
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Testing
+
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+
+*.log
+
+# =========================
+
+# Environment Variables
+
+# =========================
+
+.env
+.env.*
+!.env.example
+
+# =========================
+
+# Database
+
+# =========================
+
+*.db
+*.sqlite
+*.sqlite3
+
+# =========================
+
+# ChromaDB / Vector DB
+
+# =========================
+
+chroma_db/
+chroma/
+
+# =========================
+
+# Uploads & Generated Files
+
+# =========================
+
+uploads/
+extraction_outputs/
+generated/
+temp/
+tmp/
+
+# =========================
+
+# Node / React / Vite
+
+# =========================
+
+node_modules/
+
+# Build Output
+
+dist/
+build/
+
+# Vite
+
+.vite/
+
+# NPM / Yarn
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =========================
+
+# IDE
+
+# =========================
+
+.vscode/
+.idea/
+
+# =========================
+
+# OS Files
+
+# =========================
+
+.DS_Store
+Thumbs.db
+
+# =========================
+
+# Misc
+
+# =========================
+
+*.swp
+*.swo
+*~
