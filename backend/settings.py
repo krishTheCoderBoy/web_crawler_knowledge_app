@@ -33,9 +33,19 @@ AVAILABLE_MODELS: List[ModelInfo] = [
     ModelInfo("openrouter", "microsoft/phi-4:free", "Phi-4 (Microsoft)", multimodal=False),
     ModelInfo("openrouter", "liquid/lfm-2.5-1.2b-thinking:free", "LFM 2.5 1.2B Thinking (Liquid)", multimodal=False),
     ModelInfo("openrouter", "z-ai/glm-4.5-air:free", "GLM-4.5 Air (Z-AI)", multimodal=False),
+    ModelInfo("openrouter", "dots-studio/dots-3-note-preview:free", "Dots 3 Note Preview (Dots Studio)", multimodal=False),
+    ModelInfo("openrouter", "thinkingmachines/inkling:free", "Inkling (Thinking Machines)", multimodal=False),
+    ModelInfo("openrouter", "minimax/minimax-m2.7:free", "MiniMax M2.7", multimodal=False),
 ]
 
-DEFAULT_MODEL = AVAILABLE_MODELS[0]
+DEFAULT_MODEL = next(m for m in AVAILABLE_MODELS if m.model_id == "dots-studio/dots-3-note-preview:free")
+
+# If the primary LLM_MODEL call fails, these are tried in order as fallbacks.
+LLM_FALLBACK_MODELS: List[str] = [
+    "dots-studio/dots-3-note-preview:free",
+    "thinkingmachines/inkling:free",
+    "minimax/minimax-m2.7:free",
+]
 
 
 class Settings(BaseSettings):
@@ -52,6 +62,8 @@ class Settings(BaseSettings):
     OPENROUTER_SITE_URL: str = "http://localhost:3000"
     OPENROUTER_APP_NAME: str = "web-crawler-rag"
 
+    FIRECRAWL_API_KEY: str = ""
+
     LLM_PROVIDER: str = DEFAULT_MODEL.provider
     LLM_MODEL: str = DEFAULT_MODEL.model_id
     LLM_TEMPERATURE: float = 0.2
@@ -59,12 +71,33 @@ class Settings(BaseSettings):
 
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
 
+    GITHUB_CLIENT_ID: str = ""
+    GITHUB_CLIENT_SECRET: str = ""
+    GITHUB_OAUTH_REDIRECT_URI: str = "http://localhost:8000/auth/github/callback"
+
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_OAUTH_REDIRECT_URI: str = "http://localhost:8000/auth/google/callback"
+
+    FRONTEND_URL: str = "http://localhost:3000"
+
     class Config:
         env_file = ".env"
         extra = "ignore"
 
 
 settings = Settings()
+
+
+def model_chain(requested: str | None) -> List[str]:
+    """Ordered list of model IDs to try: the requested/default model first,
+    then the configured fallbacks, without duplicates."""
+    primary = requested or settings.LLM_MODEL
+    chain = [primary]
+    for m in LLM_FALLBACK_MODELS:
+        if m not in chain:
+            chain.append(m)
+    return chain
 
 Path(settings.CHROMA_PERSIST_DIR).mkdir(parents=True, exist_ok=True)
 Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)

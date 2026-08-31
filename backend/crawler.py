@@ -1,89 +1,40 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from io import BytesIO
-from urllib.parse import urljoin, urlparse
+import time
 
-import requests
-from bs4 import BeautifulSoup
-from pypdf import PdfReader
+from firecrawl import Firecrawl
+from firecrawl.v2.types import ScrapeOptions
 
+from settings import settings
 
-CONCURRENT_REQUESTS = 10   # pages fetched in parallel
-REQUEST_TIMEOUT = 6        # seconds per request (was 10)
-MAX_PAGES = 50             # default cap — keeps crawls under ~30s
-USER_AGENT = "Mozilla/5.0 (compatible; WebCrawlerRAG/1.0)"
+MAX_PAGES = 50            # default cap
+POLL_INTERVAL = 1.5       # seconds between crawl-status checks
+CRAWL_TIMEOUT = 300        # seconds before giving up on a crawl job
 
-
-def is_valid(url: str, domain: str) -> bool:
-    parsed = urlparse(url)
-    return parsed.scheme in ("http", "https") and parsed.netloc.endswith(domain)
+_client: Firecrawl | None = None
 
 
-def _extract_pdf_text(response: requests.Response) -> str:
-    try:
-        reader = PdfReader(BytesIO(response.content))
-        pages = [page.extract_text() or "" for page in reader.pages]
-        return "\n".join(text.strip() for text in pages if text.strip())
-    except Exception:
-        return ""
+def _get_client() -> Firecrawl:
+    global _client
+    if _client is None:
+        if not settings.FIRECRAWL_API_KEY:
+            raise RuntimeError(
+                "FIRECRAWL_API_KEY is not set. Add it to backend/.env to enable crawling."
+            )
+        _client = Firecrawl(api_key=settings.FIRECRAWL_API_KEY)
+    return _client
 
 
-def _extract_html_text(soup: BeautifulSoup) -> str:
-    text_nodes = soup.find_all(
-        ["p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "article", "section"]
-    )
-    text_content = "\n".join(node.get_text(" ", strip=True) for node in text_nodes)
-    if text_content.strip():
-        return text_content.strip()
-    body = soup.body.get_text("\n", strip=True) if soup.body else ""
-    return body.strip()
-
-
-def _extract_page_content(
-    url: str, response: requests.Response, soup: BeautifulSoup | None
-) -> dict:
-    content_type = (response.headers.get("content-type") or "").lower()
-    is_pdf = "application/pdf" in content_type or url.lower().endswith(".pdf")
-
-    if is_pdf:
-        title = url.rsplit("/", 1)[-1] or url
-        text_content = _extract_pdf_text(response)
-        image_links: list[str] = []
-        links_on_page: list[str] = []
-    else:
-        title = soup.title.get_text(" ", strip=True) if soup and soup.title else url
-        text_content = _extract_html_text(soup) if soup else ""
-        image_links = (
-            [urljoin(url, img.get("src")) for img in soup.find_all("img") if img.get("src")]
-            if soup
-            else []
-        )
-        links_on_page = (
-            [urljoin(url, a["href"]) for a in soup.find_all("a", href=True)]
-            if soup
-            else []
-        )
-
+def _document_to_page(doc) -> dict:
+    meta = doc.metadata
+    url = (meta.url if meta else None) or ""
+    title = (meta.title if meta else None) or url
     return {
         "url": url,
         "title": title,
-        "text": text_content.strip(),
-        "images": image_links,
-        "links": links_on_page,
-        "content_type": content_type or ("application/pdf" if is_pdf else "text/html"),
+        "text": (doc.markdown or "").strip(),
+        "images": doc.images or [],
+        "links": doc.links or [],
+        "content_type": (meta.content_type if meta else None) or "text/html",
     }
-
-
-def _fetch_one(url: str, session: requests.Session) -> dict:
-    """Fetch and parse a single URL. Returns page dict or error dict."""
-    try:
-        response = session.get(url, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        content_type = (response.headers.get("content-type") or "").lower()
-        is_pdf = "application/pdf" in content_type or url.lower().endswith(".pdf")
-        soup = None if is_pdf else BeautifulSoup(response.text, "html.parser")
-        return _extract_page_content(url, response, soup)
-    except Exception as exc:
-        return {"url": url, "_error": str(exc)}
 
 
 def run_crawler(
@@ -93,81 +44,59 @@ def run_crawler(
     max_pages: int = MAX_PAGES,
 ) -> dict:
     """
-    BFS crawler with concurrent page fetching.
-    Processes up to CONCURRENT_REQUESTS pages simultaneously.
+    Crawl a site via Firecrawl. Starts an async crawl job, polls for progress,
+    and maps the results back into this app's page-dict shape.
     """
-    visited: set[str] = set()
-    queue: list[str] = [start_url]
-    all_output: list[dict] = []
-    errors: list[dict] = []
-    domain = urlparse(start_url).netloc
 
-    session = requests.Session()
-    session.headers.update({"User-Agent": USER_AGENT})
-    # Share one session across threads (requests.Session is thread-safe for reads)
-    session.max_redirects = 5
-
-    def _update(status: str, current_url: str = "") -> None:
+    def _update(status: str, current_url: str = "", crawled: int = 0, total: int = 0) -> None:
         if progress_store is not None and job_id:
             progress_store[job_id] = {
                 "status": status,
-                "crawled": len(visited),
+                "crawled": crawled,
                 "max": max_pages,
                 "current_url": current_url,
-                "total_pages": len(all_output),
-                "error_count": len(errors),
+                "total_pages": total,
+                "error_count": 0,
             }
 
     _update("starting")
 
-    with ThreadPoolExecutor(max_workers=CONCURRENT_REQUESTS) as executor:
-        while queue and len(visited) < max_pages:
-            # Build next batch — skip already-visited
-            batch: list[str] = []
-            while queue and len(batch) < CONCURRENT_REQUESTS and len(visited) + len(batch) < max_pages:
-                url = queue.pop(0)
-                if url not in visited:
-                    visited.add(url)
-                    batch.append(url)
+    client = _get_client()
+    crawl_response = client.start_crawl(
+        start_url,
+        limit=max_pages,
+        scrape_options=ScrapeOptions(formats=["markdown", "links", "images"], only_main_content=True),
+    )
+    firecrawl_job_id = crawl_response.id
 
-            if not batch:
-                break
+    _update("crawling", start_url)
 
-            _update("crawling", batch[0])
+    deadline = time.time() + CRAWL_TIMEOUT
+    job = client.get_crawl_status(firecrawl_job_id)
+    while job.status == "scraping" and time.time() < deadline:
+        _update("crawling", start_url, crawled=job.completed, total=job.total)
+        time.sleep(POLL_INTERVAL)
+        job = client.get_crawl_status(firecrawl_job_id)
 
-            # Fetch batch in parallel
-            future_to_url = {executor.submit(_fetch_one, url, session): url for url in batch}
-            for future in as_completed(future_to_url):
-                page = future.result()
-                if "_error" in page:
-                    errors.append({"url": page["url"], "error": page["_error"]})
-                else:
-                    all_output.append(page)
-                    # Enqueue new links discovered (deduplicated)
-                    for link in page.get("links", []):
-                        if (
-                            is_valid(link, domain)
-                            and link not in visited
-                            and link not in queue
-                        ):
-                            queue.append(link)
+    pages = [_document_to_page(doc) for doc in job.data]
+    pages = [p for p in pages if p["url"]]
 
     result = {
         "start_url": start_url,
-        "total_pages": len(all_output),
-        "pages": all_output,
-        "errors": errors,
+        "total_pages": len(pages),
+        "pages": pages,
+        "errors": [] if job.status == "completed" else [{"url": start_url, "error": f"crawl ended with status: {job.status}"}],
         "max_pages": max_pages,
     }
 
     if progress_store is not None and job_id:
         progress_store[job_id] = {
             "status": "done",
-            "crawled": len(visited),
+            "crawled": len(pages),
             "max": max_pages,
             "current_url": "",
-            "total_pages": len(all_output),
-            "error_count": len(errors),
+            "total_pages": len(pages),
+            "error_count": len(result["errors"]),
             "result": result,
         }
 

@@ -17,7 +17,7 @@ import requests
 from chromadb.config import Settings as ChromaSettings
 from sentence_transformers import SentenceTransformer
 
-from settings import AVAILABLE_MODELS, settings
+from settings import AVAILABLE_MODELS, model_chain, settings
 
 
 CHROMA_DIR = Path(settings.CHROMA_PERSIST_DIR).resolve()
@@ -409,6 +409,23 @@ class KBManager:
         resp.raise_for_status()
         return resp
 
+    def _call_llm_with_fallback(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        model: str | None = None,
+        stream: bool = False,
+    ) -> requests.Response:
+        """Try each model in the fallback chain in order until one succeeds."""
+        last_exc: Exception | None = None
+        for candidate in model_chain(model):
+            try:
+                return self._call_llm(messages, tools=tools, model=candidate, stream=stream)
+            except Exception as exc:
+                last_exc = exc
+                continue
+        raise last_exc
+
     def _execute_tool(self, kb_name: str, tool_name: str, tool_args: dict) -> str:
         try:
             if tool_name == "search_knowledge_base":
@@ -450,7 +467,7 @@ class KBManager:
                 if not settings.OPENROUTER_API_KEY:
                     return "LLM not configured for structured extraction."
                 try:
-                    resp = self._call_llm(
+                    resp = self._call_llm_with_fallback(
                         [{"role": "user", "content": extract_prompt}],
                         model=settings.LLM_MODEL,
                     )
@@ -477,7 +494,7 @@ class KBManager:
             f"Titles: {json.dumps(titles)}"
         )
         try:
-            resp = self._call_llm(
+            resp = self._call_llm_with_fallback(
                 [{"role": "user", "content": prompt}],
                 model=settings.LLM_MODEL,
             )
@@ -542,7 +559,7 @@ class KBManager:
         # Agentic tool loop
         for _iteration in range(MAX_TOOL_ITERATIONS):
             try:
-                resp = self._call_llm(messages, tools=TOOL_DEFINITIONS, model=model)
+                resp = self._call_llm_with_fallback(messages, tools=TOOL_DEFINITIONS, model=model)
                 data = resp.json()
             except Exception as exc:
                 yield {"event": "error", "data": {"message": str(exc)}}

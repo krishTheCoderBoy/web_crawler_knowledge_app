@@ -2,6 +2,28 @@
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
+## Running the Project
+
+### Backend
+
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn main:app --reload
+```
+
+The API will be available at [http://localhost:8000](http://localhost:8000).
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm start
+```
+
+The app will be available at [http://localhost:3000](http://localhost:3000).
+
 ## Available Scripts
 
 In the project directory, you can run:

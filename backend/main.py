@@ -6,26 +6,54 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 
 from agent import AgentChatSession
-from auth import Token, authenticate_user, create_access_token, get_current_user, register_user
+from auth import (
+    Token,
+    authenticate_user,
+    change_password as auth_change_password,
+    get_current_user,
+    issue_token_for,
+    register_user,
+)
 from crawler import run_crawler
+from crypto import encrypt_secret
 from database import (
     create_kb,
+    create_oauth_user,
+    delete_api_key,
     delete_kb_record,
+    delete_user,
     ensure_default_kb,
     get_doc_stats,
     get_kb,
+    get_user,
+    get_user_by_oauth,
     init_db,
+    list_api_keys,
     list_kbs,
+    list_sessions,
     record_index,
+    revoke_session,
+    upsert_api_key,
+)
+from oauth import (
+    consume_state,
+    github_authorize_url,
+    github_exchange_code,
+    google_authorize_url,
+    google_configured,
+    google_exchange_code,
 )
 from rag import get_manager
+from settings import settings
+
+API_KEY_PROVIDERS = ["openai", "anthropic", "openrouter", "google"]
 
 # ── App setup ─────────────────────────────────────────────────────────────
 
@@ -59,6 +87,16 @@ class RegisterRequest(BaseModel):
     full_name: str
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class ApiKeyRequest(BaseModel):
+    provider: str
+    api_key: str
+
+
 class KBCreateRequest(BaseModel):
     name: str
 
@@ -85,12 +123,12 @@ class ChatRequest(BaseModel):
 # ── Auth ──────────────────────────────────────────────────────────────────
 
 @app.post("/auth/register", response_model=Token, status_code=201)
-async def register(req: RegisterRequest):
+async def register(req: RegisterRequest, user_agent: str = Header(default="")):
     try:
         user = register_user(req.username, req.password, req.full_name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    token = create_access_token({"sub": user["username"]})
+    token = issue_token_for(user["username"], user_agent)
     return {
         "access_token": token,
         "token_type": "bearer",
@@ -100,11 +138,11 @@ async def register(req: RegisterRequest):
 
 
 @app.post("/auth/login", response_model=Token)
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), user_agent: str = Header(default="")):
     user = authenticate_user(form_data.username, form_data.password)
     if not user:
         raise HTTPException(status_code=401, detail="Incorrect username or password")
-    token = create_access_token({"sub": user["username"]})
+    token = issue_token_for(user["username"], user_agent)
     return {
         "access_token": token,
         "token_type": "bearer",
@@ -113,11 +151,191 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     }
 
 
+@app.post("/auth/change-password")
+async def change_password_route(
+    req: ChangePasswordRequest, current_user: dict = Depends(get_current_user)
+):
+    try:
+        auth_change_password(current_user["username"], req.current_password, req.new_password)
+        return {"message": "Password updated."}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/auth/sessions")
+async def get_sessions(current_user: dict = Depends(get_current_user)):
+    sessions = list_sessions(current_user["username"])
+    return [
+        {**s, "is_current": s["id"] == current_user.get("session_id")}
+        for s in sessions
+    ]
+
+
+@app.delete("/auth/sessions/{session_id}")
+async def revoke_session_route(session_id: str, current_user: dict = Depends(get_current_user)):
+    if session_id == current_user.get("session_id"):
+        raise HTTPException(status_code=400, detail="Cannot revoke your current session — sign out instead.")
+    ok = revoke_session(session_id, current_user["username"])
+    if not ok:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"revoked": session_id}
+
+
+@app.delete("/auth/account")
+async def delete_account(current_user: dict = Depends(get_current_user)):
+    user_id = current_user["username"]
+    if user_id == "admin":
+        raise HTTPException(status_code=400, detail="The default admin account cannot be deleted.")
+    # Best-effort purge of vector data for each of the user's knowledge bases
+    for kb in list_kbs(user_id):
+        try:
+            get_manager().delete_kb(kb["collection"])
+        except Exception:
+            pass
+    delete_user(user_id)
+    return {"deleted": user_id}
+
+
+# ── User API keys (bring-your-own-provider-key) ────────────────────────────
+
+@app.get("/api-keys")
+async def get_api_keys(current_user: dict = Depends(get_current_user)):
+    stored = {row["provider"]: row for row in list_api_keys(current_user["username"])}
+    return [
+        {
+            "provider": p,
+            "configured": p in stored,
+            "last4": stored[p]["last4"] if p in stored else None,
+            "updated_at": stored[p]["created_at"] if p in stored else None,
+        }
+        for p in API_KEY_PROVIDERS
+    ]
+
+
+@app.post("/api-keys", status_code=201)
+async def set_api_key(req: ApiKeyRequest, current_user: dict = Depends(get_current_user)):
+    provider = req.provider.strip().lower()
+    if provider not in API_KEY_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unknown provider '{provider}'")
+    key = req.api_key.strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="API key cannot be empty")
+    last4 = key[-4:] if len(key) >= 4 else key
+    upsert_api_key(current_user["username"], provider, encrypt_secret(key), last4)
+    return {"provider": provider, "configured": True, "last4": last4}
+
+
+@app.delete("/api-keys/{provider}")
+async def remove_api_key(provider: str, current_user: dict = Depends(get_current_user)):
+    ok = delete_api_key(current_user["username"], provider.strip().lower())
+    if not ok:
+        raise HTTPException(status_code=404, detail="No key stored for this provider")
+    return {"deleted": provider}
+
+
+# ── OAuth (GitHub / Google) ─────────────────────────────────────────────────
+
+def _find_or_create_oauth_user(provider: str, profile: dict) -> dict:
+    """profile: {id, login, name, email, avatar_url}. Links to an existing
+    account with the same provider+id, otherwise creates a new one, picking
+    a free username derived from the provider login/email."""
+    existing = get_user_by_oauth(provider, profile["id"])
+    if existing:
+        return existing
+
+    base = (profile.get("login") or profile.get("email", "").split("@")[0] or provider).strip().lower()
+    base = "".join(c for c in base if c.isalnum() or c in "_-") or provider
+    username = base
+    suffix = 1
+    while get_user(username) is not None:
+        suffix += 1
+        username = f"{base}{suffix}"
+
+    return create_oauth_user(
+        username=username,
+        full_name=profile.get("name") or profile.get("login") or username,
+        provider=provider,
+        oauth_id=profile["id"],
+        avatar_url=profile.get("avatar_url", ""),
+    )
+
+
+@app.get("/auth/github/login")
+async def github_login():
+    if not settings.GITHUB_CLIENT_ID:
+        raise HTTPException(status_code=503, detail="GitHub sign-in is not configured.")
+    return RedirectResponse(github_authorize_url())
+
+
+@app.get("/auth/github/callback")
+async def github_callback(code: str = "", state: str = "", error: str = ""):
+    frontend_login = f"{settings.FRONTEND_URL}/"
+    if error:
+        return RedirectResponse(f"{frontend_login}?oauth_error={error}")
+    if not code or not state or not consume_state(state):
+        return RedirectResponse(f"{frontend_login}?oauth_error=invalid_request")
+
+    profile = github_exchange_code(code)
+    if not profile or not profile.get("id"):
+        return RedirectResponse(f"{frontend_login}?oauth_error=github_exchange_failed")
+
+    user = _find_or_create_oauth_user("github", profile)
+    token = issue_token_for(user["username"], "GitHub OAuth")
+    return RedirectResponse(
+        f"{frontend_login}?oauth_token={token}&username={user['username']}&full_name={user['full_name']}"
+    )
+
+
+@app.get("/auth/google/login")
+async def google_login():
+    if not google_configured():
+        raise HTTPException(status_code=503, detail="Google sign-in is not configured.")
+    return RedirectResponse(google_authorize_url())
+
+
+@app.get("/auth/google/callback")
+async def google_callback(code: str = "", state: str = "", error: str = ""):
+    frontend_login = f"{settings.FRONTEND_URL}/"
+    if error:
+        return RedirectResponse(f"{frontend_login}?oauth_error={error}")
+    if not code or not state or not consume_state(state):
+        return RedirectResponse(f"{frontend_login}?oauth_error=invalid_request")
+
+    profile = google_exchange_code(code)
+    if not profile or not profile.get("id"):
+        return RedirectResponse(f"{frontend_login}?oauth_error=google_exchange_failed")
+
+    user = _find_or_create_oauth_user("google", profile)
+    token = issue_token_for(user["username"], "Google OAuth")
+    return RedirectResponse(
+        f"{frontend_login}?oauth_token={token}&username={user['username']}&full_name={user['full_name']}"
+    )
+
+
+@app.get("/auth/providers")
+async def auth_providers():
+    return {
+        "github": bool(settings.GITHUB_CLIENT_ID),
+        "google": google_configured(),
+    }
+
+
 # ── Health ────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
     return {"status": "ok", "version": "3.0.0"}
+
+
+@app.get("/auth/me")
+async def auth_me(current_user: dict = Depends(get_current_user)):
+    return {
+        "username": current_user["username"],
+        "full_name": current_user["full_name"],
+        "oauth_provider": current_user.get("oauth_provider"),
+        "avatar_url": current_user.get("avatar_url"),
+        "has_password": bool(current_user.get("hashed_password")),
+    }
 
 
 @app.get("/models")

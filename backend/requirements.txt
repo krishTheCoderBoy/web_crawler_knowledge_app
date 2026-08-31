@@ -1,10 +1,9 @@
 fastapi
 uvicorn
 requests
-beautifulsoup4
+firecrawl-py
 chromadb
 sentence-transformers
 pydantic-settings
-pypdf
 python-jose[cryptography]
 passlib[bcrypt]

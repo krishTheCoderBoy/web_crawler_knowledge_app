@@ -17,7 +17,7 @@ import requests as _requests
 from database import create_kb, ensure_default_kb, get_kb, list_kbs, record_index
 from crawler import run_crawler
 from rag import get_manager
-from settings import settings
+from settings import model_chain, settings
 
 # In-memory crawl cache: crawl_id -> {pages, start_url}
 _crawl_cache: dict[str, dict] = {}
@@ -379,26 +379,34 @@ class AgentChatSession:
         }
 
         for _iter in range(8):
-            payload = {
-                "model": model,
-                "messages": messages,
-                "temperature": settings.LLM_TEMPERATURE,
-                "max_tokens": settings.LLM_MAX_TOKENS,
-                "stream": False,
-                "tools": AGENT_TOOL_DEFINITIONS,
-                "tool_choice": "auto",
-            }
-            try:
-                resp = _requests.post(
-                    settings.OPENROUTER_BASE_URL,
-                    headers=headers,
-                    json=payload,
-                    timeout=120,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-            except Exception as exc:
-                yield {"event": "error", "data": {"message": str(exc)}}
+            last_exc: Exception | None = None
+            data = None
+            for candidate in model_chain(model):
+                payload = {
+                    "model": candidate,
+                    "messages": messages,
+                    "temperature": settings.LLM_TEMPERATURE,
+                    "max_tokens": settings.LLM_MAX_TOKENS,
+                    "stream": False,
+                    "tools": AGENT_TOOL_DEFINITIONS,
+                    "tool_choice": "auto",
+                }
+                try:
+                    resp = _requests.post(
+                        settings.OPENROUTER_BASE_URL,
+                        headers=headers,
+                        json=payload,
+                        timeout=120,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    continue
+
+            if data is None:
+                yield {"event": "error", "data": {"message": str(last_exc)}}
                 return
 
             choice = data.get("choices", [{}])[0]

@@ -75,6 +75,54 @@
   color: #64748b;
 }
 
+/* ── OAuth ───────────────────────────────────────────────────────────── */
+.oauth-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.oauth-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 16px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 0.92rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.18s, background 0.18s;
+}
+
+.oauth-btn:hover {
+  border-color: #4f46e5;
+  background: #f8fafc;
+}
+
+.oauth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 -4px;
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
+.oauth-divider::before,
+.oauth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #e2e8f0;
+}
+
 /* ── Form ────────────────────────────────────────────────────────────── */
 .login-form {
   display: flex;

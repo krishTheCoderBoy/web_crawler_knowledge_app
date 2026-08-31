@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import Login from "./Login";
+import Landing from "./Landing";
+import Settings from "./Settings";
 import "./App.css";
 
 const API = "http://127.0.0.1:8000";
@@ -117,6 +119,40 @@ function ToolStep({ step }) {
   );
 }
 
+// Long-answer text collapses behind a max-height clamp with a Show More /
+// Show Less toggle, so a very long response can't push the chat viewport
+// (and therefore the page) taller — see ExpandableAnswer below.
+const ANSWER_COLLAPSE_PX = 260;
+
+function ExpandableAnswer({ text }) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const bodyRef = useRef(null);
+
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    setOverflows(el.scrollHeight > ANSWER_COLLAPSE_PX + 4);
+  }, [text]);
+
+  return (
+    <div className="answer-block">
+      <div
+        ref={bodyRef}
+        className={`message-text answer-body ${!expanded && overflows ? "collapsed" : ""}`}
+        style={!expanded && overflows ? { maxHeight: ANSWER_COLLAPSE_PX } : undefined}
+      >
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      </div>
+      {overflows && (
+        <button className="show-more-btn" onClick={() => setExpanded((v) => !v)}>
+          {expanded ? "Show Less ▲" : "Show More ▼"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function MessageBubble({ msg, activeSource, onSourceClick }) {
   if (msg.role === "user")
     return (
@@ -140,9 +176,7 @@ function MessageBubble({ msg, activeSource, onSourceClick }) {
           {msg.toolSteps.map((s, i) => <ToolStep key={i} step={s} />)}
         </div>
       )}
-      <div className="message-text">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
-      </div>
+      <ExpandableAnswer text={msg.text} />
       {msg.model && <div className="model-used">Answered with: {msg.model}</div>}
       {msg.sources?.length > 0 && (
         <div className="sources">
@@ -210,6 +244,12 @@ export default function App() {
   // Theme
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "light");
 
+  // Settings overlay
+  const [showSettings, setShowSettings] = useState(false);
+
+  // Logged-out routing: land on the marketing page first, "Get Started" reveals the sign-in form
+  const [showAuthForm, setShowAuthForm] = useState(false);
+
   // Knowledge bases
   const [kbList, setKbList] = useState([]);
   const [selectedKbId, setSelectedKbId] = useState(null);
@@ -275,9 +315,29 @@ export default function App() {
     setKbList([]);
     setSelectedKbId(null);
     setMessages([]);
+    setShowAuthForm(false); // land back on the landing page, not the sign-in form
   };
 
   // ── Effects ────────────────────────────────────────────────────────────
+
+  // Catch the redirect back from /auth/github/callback or /auth/google/callback
+  // (?oauth_token=&username=&full_name=) and complete sign-in the same way a
+  // normal password login would, then strip the params from the URL.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauthToken = params.get("oauth_token");
+    if (!oauthToken) return;
+    const oauthUser = params.get("username") || "";
+    const oauthName = params.get("full_name") || oauthUser;
+    localStorage.setItem("token", oauthToken);
+    localStorage.setItem("username", oauthUser);
+    localStorage.setItem("full_name", oauthName);
+    setToken(oauthToken);
+    setUsername(oauthUser);
+    setFullName(oauthName);
+    setShowAuthForm(true);
+    window.history.replaceState({}, "", window.location.pathname);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -584,7 +644,18 @@ export default function App() {
 
   // ── Auth gate ──────────────────────────────────────────────────────────
 
-  if (!token) return <Login onLogin={handleLogin} />;
+  if (!token) {
+    if (!showAuthForm) {
+      return (
+        <Landing
+          onGetStarted={() => setShowAuthForm(true)}
+          theme={theme}
+          onThemeChange={setTheme}
+        />
+      );
+    }
+    return <Login onLogin={handleLogin} />;
+  }
 
   // ── Render ─────────────────────────────────────────────────────────────
 
@@ -609,12 +680,31 @@ export default function App() {
           >
             {theme === "light" ? "🌙" : "☀️"}
           </button>
+          <button
+            className="theme-toggle"
+            onClick={() => setShowSettings(true)}
+            title="Settings"
+          >
+            ⚙
+          </button>
           <div className="header-user">
             <span className="header-username">{fullName || username}</span>
             <button className="logout-btn" onClick={logout}>Sign out</button>
           </div>
         </div>
       </header>
+
+      {showSettings && (
+        <Settings
+          fullName={fullName}
+          username={username}
+          theme={theme}
+          onThemeChange={setTheme}
+          onBackToChat={() => setShowSettings(false)}
+          onLogout={() => { setShowSettings(false); logout(); }}
+          token={token}
+        />
+      )}
 
       <div className="app-body">
 
@@ -773,47 +863,14 @@ export default function App() {
             ))}
           </div>
 
-          {/* ── Crawl results ── */}
-          <div className="panel-card">
-            <div className="section-heading">
-              <h2>Crawl Results</h2>
-              {crawlResult?.errors?.length ? (
-                <span>{crawlResult.errors.length} errors</span>
-              ) : null}
-            </div>
-            <div className="pages-list">
-              {crawlResult?.pages?.length ? (
-                crawlResult.pages.map((page, i) => (
-                  <article key={`${page.url}-${i}`} className="page-card">
-                    <a href={page.url} target="_blank" rel="noreferrer" className="page-url">
-                      {page.title || page.url}
-                    </a>
-                    <p className="page-meta">{page.url}</p>
-                    <p className="page-text">
-                      {page.text
-                        ? `${page.text.slice(0, 200)}${page.text.length > 200 ? "…" : ""}`
-                        : "No extractable text."}
-                    </p>
-                    <div className="page-tags">
-                      <span>{page.images.length} images</span>
-                      <span>{page.links.length} links</span>
-                    </div>
-                  </article>
-                ))
-              ) : (
-                <div className="empty-state">Crawl a site to see pages before indexing.</div>
-              )}
-            </div>
-          </div>
-
         </aside>
 
         {/* ── Chat Panel ── */}
         <main className="chat-panel">
 
-          {/* Chat header */}
+          {/* Chat header — single horizontal toolbar */}
           <div className="chat-header">
-            <div>
+            <div className="header-left">
               <p className="eyebrow">{agentMode ? "Agent Chat" : "RAG Chat"}</p>
               <h2>
                 {agentMode
@@ -886,7 +943,7 @@ export default function App() {
                   </div>
                 )}
                 {streamingMsg.text ? (
-                  <div className="message-text">
+                  <div className="message-text streaming-text">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>
                       {streamingMsg.text}
                     </ReactMarkdown>

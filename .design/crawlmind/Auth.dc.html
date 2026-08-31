@@ -1,0 +1,125 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+  }
+  :root[data-theme="dark"] {
+    --bg: #080A09; --surface: #0D100F; --surface-2: #121614;
+    --border: #1E2523; --border-soft: #171C1A;
+    --text: #EDEFEC; --text-dim: #8A938E; --text-faint: #576059;
+    --accent: #4ADE80; --accent-dim: #2E7D50; --accent-bg: rgba(74,222,128,0.08);
+    --danger: #E5776B;
+  }
+  :root[data-theme="light"] {
+    --bg: #F5F1E8; --surface: #FBF8F1; --surface-2: #F0EBDD;
+    --border: #E0D9C7; --border-soft: #EAE4D4;
+    --text: #2A2822; --text-dim: #6B6558; --text-faint: #9B9484;
+    --accent: #B85C38; --accent-dim: #8F4529; --accent-bg: rgba(184,92,56,0.08);
+    --danger: #B84438;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); }
+  a { color: var(--accent); text-decoration: none; }
+  .mono { font-family: var(--mono); }
+  .btn-primary { background: var(--accent); color: var(--bg); border: none; border-radius: 6px; padding: 12px 18px; font-weight: 600; font-size: 14.5px; cursor: pointer; width: 100%; }
+  .btn-oauth { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 11px 16px; font-weight: 500; font-size: 14px; cursor: pointer; width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px; }
+  .input { width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 11px 12px; color: var(--text); font-size: 14px; font-family: var(--sans); }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+</style>
+</helmet>
+
+<div style="min-height:100vh; background:var(--bg); display:flex; align-items:center; justify-content:center; padding:40px;" data-theme="{{theme}}">
+  <div style="width:100%; max-width:400px;">
+    <div style="display:flex; align-items:center; gap:8px; justify-content:center; margin-bottom:40px;">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M12 2 L21 7 L21 17 L12 22 L3 17 L3 7 Z"/><path d="M12 2 L12 22 M3 7 L21 17 M21 7 L3 17"/></svg>
+      <span style="font-weight:700; font-size:16px; letter-spacing:-0.02em;">crawlmind</span>
+    </div>
+
+    <div class="card" style="padding:32px;">
+      <sc-if value="{{isLogin}}" hint-placeholder-val="{{true}}">
+        <h1 style="font-size:22px; font-weight:700; margin:0 0 6px; letter-spacing:-0.01em;">Welcome back.</h1>
+        <p style="color:var(--text-dim); font-size:14px; margin:0 0 28px;">Sign in to your knowledge workspace.</p>
+      </sc-if>
+      <sc-if value="{{isLogin}}" hint-placeholder-val="{{false}}">
+        <h1 style="font-size:22px; font-weight:700; margin:0 0 6px; letter-spacing:-0.01em;">Create your account.</h1>
+        <p style="color:var(--text-dim); font-size:14px; margin:0 0 28px;">Start building searchable knowledge from any site.</p>
+      </sc-if>
+
+      <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:22px;">
+        <button class="btn-oauth">
+          <svg width="16" height="16" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.99.66-2.25 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.85A11 11 0 0 0 12 23z"/><path fill="#FBBC05" d="M5.84 14.09A6.6 6.6 0 0 1 5.5 12c0-.73.13-1.43.34-2.09V7.06H2.18A11 11 0 0 0 1 12c0 1.77.43 3.45 1.18 4.94z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1a11 11 0 0 0-9.82 6.06l3.66 2.85c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+          Continue with Google
+        </button>
+        <button class="btn-oauth">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="var(--text)"><path d="M12 .5C5.73.5.5 5.73.5 12c0 5.08 3.29 9.39 7.86 10.91.57.1.78-.25.78-.55v-2.15c-3.2.7-3.88-1.36-3.88-1.36-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.79 0c2.2-1.49 3.17-1.18 3.17-1.18.64 1.59.24 2.76.12 3.05.74.81 1.19 1.84 1.19 3.1 0 4.41-2.7 5.38-5.27 5.67.42.36.78 1.07.78 2.16v3.2c0 .3.21.66.79.55A10.52 10.52 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5z"/></svg>
+          Continue with GitHub
+        </button>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:22px;">
+        <div style="flex:1; height:1px; background:var(--border-soft);"></div>
+        <span class="mono" style="font-size:11px; color:var(--text-faint);">or</span>
+        <div style="flex:1; height:1px; background:var(--border-soft);"></div>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:14px;">
+        <div>
+          <label class="mono" style="font-size:11px; color:var(--text-faint); display:block; margin-bottom:6px;">EMAIL</label>
+          <input class="input" placeholder="you@example.com" />
+        </div>
+        <div>
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+            <label class="mono" style="font-size:11px; color:var(--text-faint);">PASSWORD</label>
+            <sc-if value="{{isLogin}}" hint-placeholder-val="{{true}}">
+              <span style="font-size:12px; color:var(--accent); cursor:pointer;">Forgot password?</span>
+            </sc-if>
+          </div>
+          <input class="input" type="password" placeholder="••••••••" />
+        </div>
+        <button class="btn-primary" style="margin-top:6px;">
+          <sc-if value="{{isLogin}}" hint-placeholder-val="{{true}}">Sign in</sc-if>
+          <sc-if value="{{isLogin}}" hint-placeholder-val="{{false}}">Create account</sc-if>
+        </button>
+      </div>
+
+      <div style="text-align:center; margin-top:22px; font-size:13.5px; color:var(--text-dim);">
+        <sc-if value="{{isLogin}}" hint-placeholder-val="{{true}}">
+          Don't have an account? <span onClick="{{toggleMode}}" style="color:var(--accent); cursor:pointer;">Create account</span>
+        </sc-if>
+        <sc-if value="{{isLogin}}" hint-placeholder-val="{{false}}">
+          Already have an account? <span onClick="{{toggleMode}}" style="color:var(--accent); cursor:pointer;">Sign in</span>
+        </sc-if>
+      </div>
+    </div>
+
+    <div style="text-align:center; margin-top:20px;">
+      <span class="mono" style="font-size:11px; color:var(--text-faint);">← back to crawlmind.com</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "theme": {"editor": "enum", "default": "dark", "options": ["dark", "light"], "section": "Theme"},
+  "isLogin": {"editor": "boolean", "default": true, "section": "Mode"}
+}'>
+class Component extends DCLogic {
+  renderVals() {
+    const isLogin = this.state.isLogin ?? this.props.isLogin ?? true;
+    const toggleMode = () => this.setState({ isLogin: !isLogin });
+    return { theme: this.props.theme ?? "dark", isLogin, toggleMode };
+  }
+}
+</script>
+</body>
+</html>

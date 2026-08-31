@@ -1,0 +1,168 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+  :root { --sans: 'Inter', sans-serif; --mono: 'JetBrains Mono', Consolas, monospace; }
+  :root[data-theme="dark"] {
+    --bg: #080A09; --surface: #0D100F; --surface-2: #121614;
+    --border: #1E2523; --border-soft: #171C1A;
+    --text: #EDEFEC; --text-dim: #8A938E; --text-faint: #576059;
+    --accent: #4ADE80; --accent-dim: #2E7D50; --accent-bg: rgba(74,222,128,0.08);
+    --danger: #E5776B; --danger-bg: rgba(229,119,107,0.08);
+  }
+  :root[data-theme="light"] {
+    --bg: #F5F1E8; --surface: #FBF8F1; --surface-2: #F0EBDD;
+    --border: #E0D9C7; --border-soft: #EAE4D4;
+    --text: #2A2822; --text-dim: #6B6558; --text-faint: #9B9484;
+    --accent: #B85C38; --accent-dim: #8F4529; --accent-bg: rgba(184,92,56,0.08);
+    --danger: #B84438; --danger-bg: rgba(184,68,56,0.08);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); }
+  .mono { font-family: var(--mono); }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+  .nav-item { padding: 9px 12px; border-radius: 7px; font-size: 13.5px; color: var(--text-dim); cursor: pointer; }
+  .nav-item.active { background: var(--accent-bg); color: var(--text); font-weight: 600; }
+  .row { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border-soft); }
+  .row:last-child { border-bottom: none; }
+  .toggle { width: 36px; height: 20px; border-radius: 100px; background: var(--accent); position: relative; cursor: pointer; }
+  .toggle-off { background: var(--border); }
+  .toggle-dot { width: 16px; height: 16px; border-radius: 50%; background: var(--bg); position: absolute; top: 2px; right: 2px; }
+  .toggle-off .toggle-dot { right: auto; left: 2px; background: var(--text-faint); }
+  .badge-soon { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.05em; padding: 2px 7px; border-radius: 100px; border: 1px solid var(--border); color: var(--text-faint); }
+</style>
+</helmet>
+
+<div style="height:100vh; display:flex; background:var(--bg);" data-theme="{{theme}}">
+
+  <div style="width:220px; flex-shrink:0; border-right:1px solid var(--border-soft); padding:20px 12px;">
+    <div style="display:flex; align-items:center; gap:8px; padding:8px 8px 24px;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M12 2 L21 7 L21 17 L12 22 L3 17 L3 7 Z"/><path d="M12 2 L12 22 M3 7 L21 17 M21 7 L3 17"/></svg>
+      <span style="font-weight:700; font-size:15px;">crawlmind</span>
+    </div>
+    <div class="nav-item active">Profile</div>
+    <div class="nav-item">Appearance</div>
+    <div class="nav-item">AI Preferences</div>
+    <div class="nav-item">API Keys</div>
+    <div class="nav-item">Notifications</div>
+    <div class="nav-item">Security</div>
+    <div class="nav-item" style="color:var(--danger);">Danger Zone</div>
+  </div>
+
+  <div style="flex:1; overflow-y:auto; padding:32px 40px; max-width:680px;">
+
+    <h1 style="font-size:22px; font-weight:700; margin:0 0 28px;">Settings</h1>
+
+    <!-- PROFILE -->
+    <div class="mono" style="font-size:11px; color:var(--accent); letter-spacing:0.06em; margin-bottom:10px;">PROFILE</div>
+    <div class="card" style="margin-bottom:32px;">
+      <div class="row">
+        <div style="display:flex; align-items:center; gap:12px;">
+          <div style="width:40px; height:40px; border-radius:50%; background:var(--accent-bg); color:var(--accent); display:flex; align-items:center; justify-content:center; font-weight:700;">K</div>
+          <div>
+            <div style="font-size:14px; font-weight:600;">Krishnendu</div>
+            <div class="mono" style="font-size:12px; color:var(--text-faint);">sankmind2025@gmail.com</div>
+          </div>
+        </div>
+        <span style="font-size:13px; color:var(--accent); cursor:pointer;">Edit</span>
+      </div>
+      <div class="row">
+        <span style="font-size:13.5px;">Connected accounts</span>
+        <span class="badge-soon">COMING SOON</span>
+      </div>
+    </div>
+
+    <!-- APPEARANCE -->
+    <div class="mono" style="font-size:11px; color:var(--accent); letter-spacing:0.06em; margin-bottom:10px;">APPEARANCE</div>
+    <div class="card" style="margin-bottom:32px; padding:18px 20px;">
+      <div style="font-size:13.5px; margin-bottom:14px;">Theme</div>
+      <div style="display:flex; gap:8px;">
+        <div onClick="{{setSystem}}" style="padding:8px 16px; border-radius:6px; border:1px solid {{sysBorder}}; font-size:13px; cursor:pointer; color:{{sysColor}};">System</div>
+        <div onClick="{{setLight}}" style="padding:8px 16px; border-radius:6px; border:1px solid {{lightBorder}}; font-size:13px; cursor:pointer; color:{{lightColor}};">Light</div>
+        <div onClick="{{setDark}}" style="padding:8px 16px; border-radius:6px; border:1px solid {{darkBorder}}; font-size:13px; cursor:pointer; color:{{darkColor}};">Dark</div>
+      </div>
+    </div>
+
+    <!-- AI PREFERENCES -->
+    <div class="mono" style="font-size:11px; color:var(--accent); letter-spacing:0.06em; margin-bottom:10px;">AI EXPERIENCE</div>
+    <div class="card" style="margin-bottom:32px;">
+      <div class="row">
+        <span style="font-size:13.5px;">Default model</span>
+        <div style="display:flex; align-items:center; gap:6px; font-family:var(--mono); font-size:12.5px; color:var(--text-dim);">Qwen3 235B <span style="color:var(--text-faint);">▾</span></div>
+      </div>
+      <div class="row">
+        <span style="font-size:13.5px;">Default chat mode</span>
+        <div style="display:flex; align-items:center; gap:6px; font-family:var(--mono); font-size:12.5px; color:var(--text-dim);">Standard <span style="color:var(--text-faint);">▾</span></div>
+      </div>
+      <div class="row">
+        <span style="font-size:13.5px;">Show citations</span>
+        <div class="toggle"><div class="toggle-dot"></div></div>
+      </div>
+      <div class="row">
+        <span style="font-size:13.5px;">Show Agent Mode trace</span>
+        <div class="toggle"><div class="toggle-dot"></div></div>
+      </div>
+    </div>
+
+    <!-- API KEYS -->
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+      <div class="mono" style="font-size:11px; color:var(--accent); letter-spacing:0.06em;">API KEYS</div>
+      <span class="badge-soon">COMING SOON</span>
+    </div>
+    <div class="card" style="margin-bottom:32px; opacity:0.55;">
+      <div class="row">
+        <span style="font-size:13.5px;">OpenAI</span>
+        <span class="mono" style="font-size:12px; color:var(--text-faint);">Not configured</span>
+      </div>
+      <div class="row">
+        <span style="font-size:13.5px;">Anthropic</span>
+        <span class="mono" style="font-size:12px; color:var(--text-faint);">Not configured</span>
+      </div>
+      <div class="row">
+        <span style="font-size:13.5px;">OpenRouter</span>
+        <span class="mono" style="font-size:12px; color:var(--text-faint);">Not configured</span>
+      </div>
+    </div>
+
+    <!-- DANGER ZONE -->
+    <div class="mono" style="font-size:11px; color:var(--danger); letter-spacing:0.06em; margin-bottom:10px;">DANGER ZONE</div>
+    <div class="card" style="border-color:var(--danger); background:var(--danger-bg); padding:20px; margin-bottom:40px;">
+      <div style="font-size:14px; font-weight:600; margin-bottom:6px;">Delete account</div>
+      <div style="font-size:13px; color:var(--text-dim); margin-bottom:16px; line-height:1.6;">
+        Permanently delete your Crawlmind account, knowledge bases, conversations and associated account data. This action cannot be undone.
+      </div>
+      <button style="background:transparent; border:1px solid var(--danger); color:var(--danger); border-radius:6px; padding:9px 16px; font-size:13px; font-weight:600; cursor:pointer;">Delete Account</button>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "theme": {"editor": "enum", "default": "dark", "options": ["dark", "light"], "section": "Theme"}
+}'>
+class Component extends DCLogic {
+  renderVals() {
+    const themeMode = this.state.themeMode ?? "dark";
+    const c = (k) => themeMode === k ? "var(--accent)" : "var(--text-dim)";
+    const b = (k) => themeMode === k ? "var(--accent-dim)" : "var(--border)";
+    return {
+      theme: this.props.theme ?? "dark",
+      setSystem: () => this.setState({ themeMode: "system" }),
+      setLight: () => this.setState({ themeMode: "light" }),
+      setDark: () => this.setState({ themeMode: "dark" }),
+      sysColor: c("system"), sysBorder: b("system"),
+      lightColor: c("light"), lightBorder: b("light"),
+      darkColor: c("dark"), darkBorder: b("dark"),
+    };
+  }
+}
+</script>
+</body>
+</html>
