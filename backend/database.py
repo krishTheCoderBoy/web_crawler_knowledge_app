@@ -4,6 +4,7 @@ ChromaDB still handles vector storage; this module tracks KB identity,
 ownership, and document history.
 """
 
+import json
 import re
 import sqlite3
 from datetime import datetime
@@ -44,6 +45,16 @@ def init_db() -> None:
                 page_count  INTEGER DEFAULT 0,
                 chunk_count INTEGER DEFAULT 0,
                 indexed_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_conversations (
+                id          TEXT PRIMARY KEY,
+                user_id     TEXT    NOT NULL,
+                kb_id       INTEGER NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                title       TEXT    NOT NULL,
+                messages    TEXT    NOT NULL DEFAULT '[]',
+                created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
             );
 
             CREATE TABLE IF NOT EXISTS users (
@@ -285,6 +296,75 @@ def get_doc_stats(kb_id: int) -> dict:
             (kb_id,),
         ).fetchone()
         return dict(row) if row else {"doc_count": 0, "total_pages": 0, "total_chunks": 0}
+    finally:
+        conn.close()
+
+
+# ── Chat conversations ────────────────────────────────────────────────────
+
+def create_chat_conversation(
+    conversation_id: str, user_id: str, kb_id: int, title: str, messages: list[dict]
+) -> dict:
+    conn = _connect()
+    try:
+        conn.execute(
+            """INSERT INTO chat_conversations (id, user_id, kb_id, title, messages)
+               VALUES (?,?,?,?,?)""",
+            (conversation_id, user_id, kb_id, title, json.dumps(messages)),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT id, kb_id, title, created_at, updated_at FROM chat_conversations WHERE id=?",
+            (conversation_id,),
+        ).fetchone()
+        return dict(row)
+    finally:
+        conn.close()
+
+
+def list_chat_conversations(user_id: str, kb_id: int) -> list[dict]:
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            """SELECT id, kb_id, title, created_at, updated_at
+               FROM chat_conversations WHERE user_id=? AND kb_id=?
+               ORDER BY updated_at DESC, created_at DESC""",
+            (user_id, kb_id),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_chat_conversation(conversation_id: str, user_id: str) -> dict | None:
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT * FROM chat_conversations WHERE id=? AND user_id=?",
+            (conversation_id, user_id),
+        ).fetchone()
+        if not row:
+            return None
+        conversation = dict(row)
+        conversation["messages"] = json.loads(conversation["messages"])
+        return conversation
+    finally:
+        conn.close()
+
+
+def update_chat_conversation(
+    conversation_id: str, user_id: str, messages: list[dict]
+) -> bool:
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            """UPDATE chat_conversations
+               SET messages=?, updated_at=datetime('now')
+               WHERE id=? AND user_id=?""",
+            (json.dumps(messages), conversation_id, user_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()
 

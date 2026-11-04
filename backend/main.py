@@ -25,22 +25,26 @@ from crawler import run_crawler
 from crypto import encrypt_secret
 from database import (
     create_kb,
+    create_chat_conversation,
     create_oauth_user,
     delete_api_key,
     delete_kb_record,
     delete_user,
     ensure_default_kb,
     get_doc_stats,
+    get_chat_conversation,
     get_kb,
     get_user,
     get_user_by_oauth,
     init_db,
     list_api_keys,
+    list_chat_conversations,
     list_kbs,
     list_sessions,
     record_index,
     revoke_session,
     upsert_api_key,
+    update_chat_conversation,
 )
 from oauth import (
     consume_state,
@@ -118,6 +122,10 @@ class ChatRequest(BaseModel):
     knowledge_base_id: Optional[int] = None
     # Legacy
     kb_name: str = "default"
+
+
+class ChatConversationRequest(BaseModel):
+    messages: list[dict] = Field(default_factory=list)
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────
@@ -427,6 +435,73 @@ def knowledge_base_status(
     }
 
 
+@app.get("/knowledge-bases/{kb_id}/chat-conversations")
+def get_knowledge_base_chat_conversations(
+    kb_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = current_user["username"]
+    if not get_kb(kb_id, user_id):
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    return list_chat_conversations(user_id, kb_id)
+
+
+@app.get("/knowledge-bases/{kb_id}/agent-questions")
+def get_knowledge_base_agent_questions(
+    kb_id: int,
+    model_id: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    kb = get_kb(kb_id, current_user["username"])
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    return {"questions": get_manager().generate_agent_questions(kb["collection"], model_id)}
+
+
+@app.post("/knowledge-bases/{kb_id}/chat-conversations", status_code=201)
+def create_knowledge_base_chat_conversation(
+    kb_id: int,
+    req: ChatConversationRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = current_user["username"]
+    if not get_kb(kb_id, user_id):
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    first_user_message = next(
+        (message.get("text", "").strip() for message in req.messages if message.get("role") == "user"),
+        "New conversation",
+    )
+    title = first_user_message[:77].rstrip()
+    if len(first_user_message) > 80:
+        title += "..."
+    return create_chat_conversation(
+        str(uuid.uuid4()), user_id, kb_id, title or "New conversation", req.messages
+    )
+
+
+@app.get("/chat-conversations/{conversation_id}")
+def get_chat_conversation_route(
+    conversation_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    conversation = get_chat_conversation(conversation_id, current_user["username"])
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conversation
+
+
+@app.put("/chat-conversations/{conversation_id}")
+def update_chat_conversation_route(
+    conversation_id: str,
+    req: ChatConversationRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = current_user["username"]
+    if not update_chat_conversation(conversation_id, user_id, req.messages):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return get_chat_conversation(conversation_id, user_id)
+
+
 # ── Crawling (async job-based with SSE progress) ──────────────────────────
 
 def _run_crawl_job(job_id: str, start_url: str, max_pages: int) -> None:
@@ -562,6 +637,57 @@ async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current
                 kb_name=collection,
                 question=req.question.strip(),
                 chat_history=req.chat_history,
+                model_id=req.model_id,
+            ):
+                event_queue.put(event)
+        except Exception as exc:
+            event_queue.put({"event": "error", "data": {"message": str(exc)}})
+        finally:
+            event_queue.put(None)
+
+    async def generate():
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(_executor, producer)
+        while True:
+            try:
+                event = await loop.run_in_executor(
+                    _executor, lambda: event_queue.get(timeout=120)
+                )
+            except Exception:
+                yield f"event: error\ndata: {json.dumps({'message': 'Timeout'})}\n\n"
+                return
+            if event is None:
+                return
+            name = event.get("event", "message")
+            data = json.dumps(event.get("data", {}))
+            yield f"event: {name}\ndata: {data}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/agent/answer/stream")
+async def agent_answer_stream(req: ChatRequest, current_user: dict = Depends(get_current_user)):
+    if not req.question.strip():
+        raise HTTPException(status_code=400, detail="Question cannot be empty")
+    if req.knowledge_base_id is None:
+        raise HTTPException(status_code=400, detail="Knowledge Base is required")
+
+    kb = get_kb(req.knowledge_base_id, current_user["username"])
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+
+    event_queue: queue.Queue = queue.Queue()
+    manager = get_manager()
+
+    def producer():
+        try:
+            for event in manager.grounded_chat_stream(
+                kb_name=kb["collection"],
+                question=req.question.strip(),
                 model_id=req.model_id,
             ):
                 event_queue.put(event)

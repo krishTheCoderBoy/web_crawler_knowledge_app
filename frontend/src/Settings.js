@@ -4,12 +4,10 @@ import "./Settings.css";
 const API = "http://127.0.0.1:8000";
 
 const MODEL_OPTIONS = [
-  { id: "gpt-oss-120b", label: "GPT OSS 120B", provider: "OpenAI" },
-  { id: "llama-3.3-70b", label: "Llama 3.3 70B", provider: "Meta" },
-  { id: "deepseek-r1", label: "DeepSeek R1", provider: "DeepSeek" },
-  { id: "qwen3-235b", label: "Qwen3 235B", provider: "Alibaba" },
-  { id: "glm-4.5-air", label: "GLM-4.5 Air", provider: "Z-AI" },
-  { id: "gemma-3-27b", label: "Gemma 3 27B", provider: "Google" },
+  { id: "openrouter/free", label: "Auto (any available free model)", provider: "OpenRouter" },
+  { id: "nvidia/nemotron-3-ultra-550b-a55b:free", label: "Nemotron 3 Ultra 550B", provider: "NVIDIA" },
+  { id: "poolside/laguna-s-2.1:free", label: "Laguna S 2.1", provider: "Poolside" },
+  { id: "dots-studio/dots-3-note-preview:free", label: "Dots 3 Note Preview", provider: "Dots Studio" },
 ];
 
 const NAV_SECTIONS = [
@@ -60,6 +58,8 @@ export default function Settings({
   onBackToChat,
   onLogout,
   token,
+  selectedModel,
+  onModelChange,
 }) {
   const [active, setActive] = useState("profile");
 
@@ -71,7 +71,7 @@ export default function Settings({
 
   // ── AI preferences (local, no backend endpoint for user prefs) ──────────
   const [defaultModel, setDefaultModel] = useState(
-    () => localStorage.getItem("pref_default_model") || MODEL_OPTIONS[0].id
+    () => selectedModel || localStorage.getItem("pref_default_model") || MODEL_OPTIONS[0].id
   );
   const [defaultMode, setDefaultMode] = useState(
     () => localStorage.getItem("pref_default_mode") || "standard"
@@ -86,6 +86,7 @@ export default function Settings({
   const persistModel = (id) => {
     setDefaultModel(id);
     localStorage.setItem("pref_default_model", id);
+    onModelChange(id);
   };
   const persistMode = (mode) => {
     setDefaultMode(mode);

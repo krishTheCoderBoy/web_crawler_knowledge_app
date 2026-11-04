@@ -406,7 +406,17 @@ class KBManager:
             timeout=90,
             stream=stream,
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            try:
+                error = resp.json().get("error", {})
+                detail = error.get("message") or error.get("metadata", {}).get("raw")
+            except (ValueError, AttributeError):
+                detail = None
+            detail = detail or resp.text or resp.reason
+            raise RuntimeError(
+                f"OpenRouter rejected model '{payload['model']}' "
+                f"({resp.status_code}): {detail}"
+            )
         return resp
 
     def _call_llm_with_fallback(
@@ -507,6 +517,79 @@ class KBManager:
             pass
         return []
 
+    def generate_agent_questions(self, kb_name: str, model_id: str | None = None) -> list[str]:
+        collection = self._collection(kb_name)
+        if collection.count() == 0:
+            return []
+
+        indexed = collection.get(limit=36, include=["documents", "metadatas"])
+        documents = indexed.get("documents") or []
+        metadatas = indexed.get("metadatas") or []
+        samples = []
+        for index, document in enumerate(documents):
+            metadata = metadatas[index] if index < len(metadatas) else {}
+            samples.append({
+                "title": metadata.get("title", ""),
+                "content": _clean_whitespace(document)[:900],
+            })
+
+        prompt = (
+            "Create 10 to 12 distinct questions a reader could ask about this website. "
+            "Every question must be answerable from the supplied crawled page content. "
+            "Use specific topics, people, products, steps, or claims found in the content; "
+            "do not invent topics. Return only a JSON array of question strings.\n\n"
+            f"Crawled pages: {json.dumps(samples, ensure_ascii=False)}"
+        )
+        questions = []
+        if settings.OPENROUTER_API_KEY:
+            try:
+                response = self._call_llm_with_fallback(
+                    [{"role": "user", "content": prompt}], model=model_id
+                )
+                content = response.json()["choices"][0]["message"]["content"].strip()
+                match = re.search(r"\[.*\]", content, re.DOTALL)
+                if match:
+                    parsed = json.loads(match.group())
+                    if isinstance(parsed, list):
+                        questions = [
+                            _clean_whitespace(question)
+                            for question in parsed
+                            if isinstance(question, str) and _clean_whitespace(question)
+                        ]
+            except Exception:
+                pass
+
+        questions = list(dict.fromkeys(questions))[:12]
+        fallback_forms = [
+            "What are the key points about {topic}?",
+            "How does {topic} work?",
+            "What details does the website provide about {topic}?",
+            "Who or what is {topic} intended for?",
+            "What benefits or outcomes are described for {topic}?",
+            "Are there requirements or steps related to {topic}?",
+            "What should readers know about {topic}?",
+            "Which examples or evidence are given for {topic}?",
+            "What limitations or considerations apply to {topic}?",
+            "How is {topic} connected to the rest of the website?",
+            "What changes or updates are described for {topic}?",
+            "Where can readers find more information about {topic}?",
+        ]
+        topics = list(dict.fromkeys(
+            sample["title"] or " ".join(sample["content"].split()[:8])
+            for sample in samples
+            if sample["title"] or sample["content"]
+        ))
+        if not topics:
+            return questions[:12]
+        for index, form in enumerate(fallback_forms):
+            topic = topics[index % len(topics)]
+            candidate = form.format(topic=topic.rstrip(" .?!"))
+            if candidate not in questions:
+                questions.append(candidate)
+            if len(questions) >= 12:
+                break
+        return questions[:12]
+
     # ------------------------------------------------------------------
     # Agentic streaming chat
     # ------------------------------------------------------------------
@@ -559,7 +642,7 @@ class KBManager:
         # Agentic tool loop
         for _iteration in range(MAX_TOOL_ITERATIONS):
             try:
-                resp = self._call_llm_with_fallback(messages, tools=TOOL_DEFINITIONS, model=model)
+                resp = self._call_llm_with_fallback(messages, tools=TOOL_DEFINITIONS, model=model_id)
                 data = resp.json()
             except Exception as exc:
                 yield {"event": "error", "data": {"message": str(exc)}}
@@ -629,6 +712,59 @@ class KBManager:
         # Max iterations reached
         yield {"event": "token", "data": {"text": "I gathered as much information as I could. Please try a more specific question."}}
         yield {"event": "done", "data": {"sources": all_sources, "model": model, "mode": "max-iterations"}}
+
+    def grounded_chat_stream(
+        self, kb_name: str, question: str, model_id: str | None = None
+    ) -> Generator[dict, None, None]:
+        """Answer from retrieved chunks in this KB only; no external tools are available."""
+        yield {
+            "event": "tool_call",
+            "data": {"name": "search_knowledge_base", "args": {"query": question}, "call_id": "kb-only"},
+        }
+        retrieval = self.search(kb_name, question)
+        sources = retrieval["matches"]
+        yield {
+            "event": "tool_result",
+            "data": {
+                "name": "search_knowledge_base",
+                "summary": f"Retrieved {len(sources)} matching chunks from the selected Knowledge Base.",
+                "call_id": "kb-only",
+            },
+        }
+
+        model = model_id or settings.LLM_MODEL
+        if not sources:
+            answer = "I couldn't find information about this in the selected Knowledge Base."
+        elif not settings.OPENROUTER_API_KEY:
+            answer = self._build_fallback_answer(question, sources)
+        else:
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "Answer the user's question using only the supplied excerpts from the selected "
+                        "Knowledge Base. Do not use outside knowledge or infer unsupported details. "
+                        "If the excerpts do not answer the question, say so. Cite relevant source URLs."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Question: {question}\n\nKnowledge Base excerpts:\n{retrieval['context']}",
+                },
+            ]
+            try:
+                response = self._call_llm_with_fallback(messages, model=model_id)
+                answer = response.json()["choices"][0]["message"].get("content", "").strip()
+                if not answer:
+                    answer = "I couldn't generate an answer from the selected Knowledge Base."
+                model = response.json().get("model", model)
+            except Exception as exc:
+                yield {"event": "error", "data": {"message": str(exc)}}
+                return
+
+        for index, word in enumerate(answer.split(" ")):
+            yield {"event": "token", "data": {"text": word if index == 0 else " " + word}}
+        yield {"event": "done", "data": {"sources": sources, "model": model, "mode": "kb-only"}}
 
     def _build_fallback_answer(self, question: str, matches: list[dict]) -> str:
         if not matches:

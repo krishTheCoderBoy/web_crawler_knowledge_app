@@ -173,6 +173,56 @@ body {
 /* ── Knowledge Base panel ────────────────────────────────────────────── */
 .kb-panel { padding-bottom: 14px; }
 
+.history-panel { padding-bottom: 14px; }
+
+.history-empty {
+  margin: 12px 0 2px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.conversation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  margin-top: 10px;
+  overflow-y: auto;
+}
+
+.conversation-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.conversation-item:hover,
+.conversation-item.active {
+  background: var(--brand-soft);
+  border-color: var(--line);
+}
+
+.conversation-title {
+  overflow: hidden;
+  font-size: 0.84rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-date {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
 .kb-count-badge {
   display: inline-flex;
   align-items: center;
@@ -519,6 +569,31 @@ button:disabled { opacity: 0.45; cursor: not-allowed; transform: none !important
 }
 .message:hover .copy-btn { opacity: 1; }
 
+.message.assistant { position: relative; }
+
+.regenerate-answer-btn {
+  position: absolute;
+  top: 10px;
+  right: 44px;
+  width: 30px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.18s, color 0.18s, border-color 0.18s;
+}
+.message:hover .regenerate-answer-btn,
+.regenerate-answer-btn:focus-visible { opacity: 1; }
+.regenerate-answer-btn:hover:not(:disabled) {
+  color: var(--brand-deep);
+  border-color: var(--brand);
+}
+.regenerate-answer-btn:disabled { cursor: wait; }
+
 /* ── Rows / layouts ──────────────────────────────────────────────────── */
 .crawl-bar,
 .model-row,
@@ -542,6 +617,15 @@ button:disabled { opacity: 0.45; cursor: not-allowed; transform: none !important
 .action-row { margin-top: 16px; } /* breathing room between Max Pages and Index Knowledge Base */
 .header-right { align-items: center; gap: 16px; flex-shrink: 0; }
 .header-actions { align-items: center; gap: 8px; }
+.selected-model-indicator {
+  max-width: 150px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ── Chat header — single horizontal toolbar (desktop) ──────────────── */
 .header-left {
@@ -939,6 +1023,49 @@ button:disabled { opacity: 0.45; cursor: not-allowed; transform: none !important
   border-color: var(--brand);
   color: var(--brand-deep);
   transform: translateY(-1px);
+}
+
+.agent-question-panel {
+  flex-shrink: 0;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+.agent-question-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  gap: 7px;
+  max-height: 164px;
+  overflow-y: auto;
+}
+
+.agent-question-card {
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.agent-question-card:hover {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  color: var(--brand-deep);
+}
+
+.agent-question-loading {
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 /* retrieval-panel removed */

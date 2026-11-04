@@ -7,6 +7,38 @@ import Settings from "./Settings";
 import "./App.css";
 
 const API = "http://127.0.0.1:8000";
+const DEFAULT_MODEL = "openrouter/free";
+const MODEL_ID_ALIASES = {
+  "gpt-oss-120b": DEFAULT_MODEL,
+  "openai/gpt-oss-120b:free": DEFAULT_MODEL,
+  "llama-3.3-70b": DEFAULT_MODEL,
+  "meta-llama/llama-3.3-70b-instruct:free": DEFAULT_MODEL,
+  "deepseek-r1": DEFAULT_MODEL,
+  "deepseek/deepseek-r1-0528:free": DEFAULT_MODEL,
+  "qwen3-235b": DEFAULT_MODEL,
+  "qwen/qwen3-235b-a22b:free": DEFAULT_MODEL,
+  "glm-4.5-air": DEFAULT_MODEL,
+  "z-ai/glm-4.5-air:free": DEFAULT_MODEL,
+  "gemma-3-27b": DEFAULT_MODEL,
+  "google/gemma-3-27b-it:free": DEFAULT_MODEL,
+};
+const MODEL_LABELS = {
+  "openrouter/free": "Auto Free Model",
+  "nvidia/nemotron-3-ultra-550b-a55b:free": "Nemotron 3 Ultra 550B",
+  "poolside/laguna-s-2.1:free": "Laguna S 2.1",
+  "dots-studio/dots-3-note-preview:free": "Dots 3 Note Preview",
+};
+
+function getPreferredModel() {
+  const saved = localStorage.getItem("pref_default_model");
+  const model = MODEL_ID_ALIASES[saved] || saved;
+  if (!model || !MODEL_LABELS[model]) {
+    localStorage.setItem("pref_default_model", DEFAULT_MODEL);
+    return DEFAULT_MODEL;
+  }
+  if (model !== saved) localStorage.setItem("pref_default_model", model);
+  return model;
+}
 
 // ── SSE helpers ────────────────────────────────────────────────────────────
 
@@ -153,7 +185,7 @@ function ExpandableAnswer({ text }) {
   );
 }
 
-function MessageBubble({ msg, activeSource, onSourceClick }) {
+function MessageBubble({ msg, activeSource, onSourceClick, onRegenerateAnswer, asking }) {
   if (msg.role === "user")
     return (
       <div className="message user">
@@ -198,6 +230,17 @@ function MessageBubble({ msg, activeSource, onSourceClick }) {
             ))}
           </div>
         </div>
+      )}
+      {msg.agentGenerated && (
+        <button
+          className="regenerate-answer-btn"
+          onClick={() => onRegenerateAnswer(msg)}
+          disabled={asking}
+          title="Regenerate answer from this Knowledge Base"
+          aria-label="Regenerate answer"
+        >
+          🔁
+        </button>
       )}
       <CopyButton text={msg.text} />
     </div>
@@ -260,12 +303,13 @@ export default function App() {
   const [showIndexModal, setShowIndexModal] = useState(false);
   const [indexTargetKbId, setIndexTargetKbId] = useState(null);
 
-  // Fixed model — GPT OSS 120B
-  const FIXED_MODEL = "gpt-oss-120b";
-  const [selectedModel] = useState(FIXED_MODEL);
+  const [selectedModel, setSelectedModel] = useState(getPreferredModel);
 
   // Agent mode toggle
   const [agentMode, setAgentMode] = useState(false);
+  const [agentQuestions, setAgentQuestions] = useState([]);
+  const [loadingAgentQuestions, setLoadingAgentQuestions] = useState(false);
+  const [agentQuestionsRefresh, setAgentQuestionsRefresh] = useState(0);
 
   // Crawl
   const [url, setUrl] = useState("");
@@ -275,6 +319,8 @@ export default function App() {
 
   // Chat
   const [messages, setMessages] = useState([]);
+  const [chatConversations, setChatConversations] = useState([]);
+  const [activeConversationId, setActiveConversationId] = useState(null);
   const [streamingMsg, setStreamingMsg] = useState(null);
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
@@ -356,6 +402,39 @@ export default function App() {
   useEffect(() => {
     if (selectedKbId != null) fetchKbStatus(selectedKbId);
   }, [selectedKbId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (selectedKbId == null) {
+      setChatConversations([]);
+      return;
+    }
+    let cancelled = false;
+    setChatConversations([]);
+    authedFetch(`${API}/knowledge-bases/${selectedKbId}/chat-conversations`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => { if (!cancelled) setChatConversations(data); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [selectedKbId, authedFetch]);
+
+  useEffect(() => {
+    if (!agentMode || selectedKbId == null) {
+      setAgentQuestions([]);
+      setLoadingAgentQuestions(false);
+      return;
+    }
+    let cancelled = false;
+    setAgentQuestions([]);
+    setLoadingAgentQuestions(true);
+    authedFetch(`${API}/knowledge-bases/${selectedKbId}/agent-questions?model_id=${encodeURIComponent(selectedModel)}`)
+      .then((res) => (res.ok ? res.json() : { questions: [] }))
+      .then((data) => {
+        if (!cancelled) setAgentQuestions(data.questions || []);
+      })
+      .catch(() => { if (!cancelled) setAgentQuestions([]); })
+      .finally(() => { if (!cancelled) setLoadingAgentQuestions(false); });
+    return () => { cancelled = true; };
+  }, [agentMode, selectedKbId, agentQuestionsRefresh, selectedModel, authedFetch]);
 
   // ── API calls ──────────────────────────────────────────────────────────
 
@@ -465,6 +544,7 @@ export default function App() {
       if (!res.ok) throw new Error(data.detail || "Indexing failed");
       setKbStatus(data);
       setSuggestedQuestions(data.suggested_questions || []);
+      setAgentQuestionsRefresh((version) => version + 1);
       setMessages([{ role: "system", text: data.message || "Indexing complete." }]);
       setSelectedKbId(kbId);
       fetchKbList();
@@ -536,13 +616,31 @@ export default function App() {
 
   const clearChat = () => {
     setMessages([]);
+    setActiveConversationId(null);
     setStreamingMsg(null);
     setActiveSource(null);
     setSuggestedQuestions([]);
   };
 
+  const openConversation = async (conversationId) => {
+    try {
+      const res = await authedFetch(`${API}/chat-conversations/${conversationId}`);
+      if (!res.ok) throw new Error("Could not load this conversation.");
+      const conversation = await res.json();
+      setSelectedKbId(conversation.kb_id);
+      setActiveConversationId(conversation.id);
+      setMessages(conversation.messages || []);
+      setStreamingMsg(null);
+      setActiveSource(null);
+      setSuggestedQuestions([]);
+      setError("");
+    } catch (err) {
+      setError(err.message || "Could not load this conversation.");
+    }
+  };
+
   const sendQuestion = useCallback(
-    async (q) => {
+    async (q, { selectedKbOnly = false } = {}) => {
       const trimmed = (q || question).trim();
       if (!trimmed || asking) return;
 
@@ -583,22 +681,49 @@ export default function App() {
           tokenBuffer += evt.data.text;
           setStreamingMsg({ text: tokenBuffer, toolSteps: [...toolSteps] });
         } else if (evt.event === "done") {
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: "assistant",
-              text: tokenBuffer,
-              toolSteps: [...toolSteps],
-              sources: evt.data.sources || [],
-              model: evt.data.model,
-            },
-          ]);
+          const assistantMessage = {
+            role: "assistant",
+            text: tokenBuffer,
+            toolSteps: [...toolSteps],
+            sources: evt.data.sources || [],
+            model: evt.data.model,
+            ...(selectedKbOnly ? { agentGenerated: true, question: trimmed } : {}),
+          };
+          const completedMessages = [
+            ...messages,
+            { role: "user", text: trimmed },
+            assistantMessage,
+          ];
+          setMessages(completedMessages);
           setStreamingMsg(null);
-          setAsking(false);
           if ((evt.data.sources || []).length > 0) setActiveSource(evt.data.sources[0]);
           fetchKbStatus(selectedKbId);
           // Refresh KB list — agent may have created KBs or indexed content
           if (agentMode) fetchKbList();
+          (async () => {
+            try {
+              const isNewConversation = !activeConversationId;
+              const url = isNewConversation
+                ? `${API}/knowledge-bases/${selectedKbId}/chat-conversations`
+                : `${API}/chat-conversations/${activeConversationId}`;
+              const res = await authedFetch(url, {
+                method: isNewConversation ? "POST" : "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ messages: completedMessages }),
+              });
+              if (!res.ok) throw new Error("Could not save chat history.");
+              const conversation = await res.json();
+              setActiveConversationId(conversation.id);
+              const historyRes = await authedFetch(
+                `${API}/knowledge-bases/${selectedKbId}/chat-conversations`
+              );
+              if (historyRes.ok) setChatConversations(await historyRes.json());
+            } catch {
+              setError("Chat completed, but its history could not be saved.");
+            } finally {
+              setAsking(false);
+            }
+          })();
         } else if (evt.event === "error") {
           setError(evt.data.message || "Chat failed.");
           setStreamingMsg(null);
@@ -608,7 +733,9 @@ export default function App() {
 
       try {
         await streamPost(
-          agentMode ? `${API}/agent/chat/stream` : `${API}/chat/stream`,
+          selectedKbOnly
+            ? `${API}/agent/answer/stream`
+            : agentMode ? `${API}/agent/chat/stream` : `${API}/chat/stream`,
           {
             question: trimmed,
             chat_history: historyForReq,
@@ -625,8 +752,12 @@ export default function App() {
         setAsking(false);
       }
     },
-    [question, asking, messages, selectedModel, selectedKbId, token, authedFetch, agentMode] // eslint-disable-line
+    [question, asking, messages, selectedModel, selectedKbId, token, authedFetch, agentMode, activeConversationId] // eslint-disable-line
   );
+
+  const regenerateAgentAnswer = (message) => {
+    if (message.question) sendQuestion(message.question, { selectedKbOnly: true });
+  };
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendQuestion(); }
@@ -703,6 +834,11 @@ export default function App() {
           onBackToChat={() => setShowSettings(false)}
           onLogout={() => { setShowSettings(false); logout(); }}
           token={token}
+          selectedModel={selectedModel}
+          onModelChange={(model) => {
+            setSelectedModel(model);
+            localStorage.setItem("pref_default_model", model);
+          }}
         />
       )}
 
@@ -763,6 +899,38 @@ export default function App() {
                 + Create
               </button>
             </div>
+          </div>
+
+          {/* ── Chat History ── */}
+          <div className="panel-card history-panel">
+            <div className="section-heading">
+              <h2>Chat History</h2>
+              <span className="kb-count-badge">{chatConversations.length}</span>
+            </div>
+            {!selectedKbId ? (
+              <p className="history-empty">Select a Knowledge Base to view conversations.</p>
+            ) : chatConversations.length === 0 ? (
+              <p className="history-empty">No conversations yet.</p>
+            ) : (
+              <div className="conversation-list">
+                {chatConversations.map((conversation) => (
+                  <button
+                    key={conversation.id}
+                    className={`conversation-item ${activeConversationId === conversation.id ? "active" : ""}`}
+                    onClick={() => openConversation(conversation.id)}
+                    title={conversation.title}
+                  >
+                    <span className="conversation-title">{conversation.title}</span>
+                    <time className="conversation-date">
+                      {new Date(`${conversation.created_at.replace(" ", "T")}Z`).toLocaleString(undefined, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })}
+                    </time>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* ── Crawl ── */}
@@ -879,6 +1047,9 @@ export default function App() {
               </h2>
             </div>
             <div className="header-right">
+              <span className="selected-model-indicator" title={selectedModel}>
+                {MODEL_LABELS[selectedModel] || selectedModel}
+              </span>
               <button
                 className={`agent-toggle ${agentMode ? "active" : ""}`}
                 onClick={() => { setAgentMode((m) => !m); clearChat(); }}
@@ -931,6 +1102,8 @@ export default function App() {
                   msg={msg}
                   activeSource={activeSource}
                   onSourceClick={setActiveSource}
+                  onRegenerateAnswer={regenerateAgentAnswer}
+                  asking={asking}
                 />
               ))
             )}
@@ -960,7 +1133,28 @@ export default function App() {
           </div>
 
           {/* Suggested questions */}
-          {suggestedQuestions.length > 0 && !asking && (
+          {agentMode && !asking && (loadingAgentQuestions || agentQuestions.length > 0) && (
+            <div className="agent-question-panel">
+              <span className="suggestions-label">Questions from this Knowledge Base</span>
+              {loadingAgentQuestions ? (
+                <div className="agent-question-loading">Generating questions from indexed pages…</div>
+              ) : (
+                <div className="agent-question-grid">
+                  {agentQuestions.map((q, i) => (
+                    <button
+                      key={`${q}-${i}`}
+                      className="agent-question-card"
+                      onClick={() => sendQuestion(q, { selectedKbOnly: true })}
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!agentMode && suggestedQuestions.length > 0 && !asking && (
             <div className="suggested-questions">
               <span className="suggestions-label">Suggested questions</span>
               <div className="suggestions-chips">

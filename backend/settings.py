@@ -21,31 +21,44 @@ class ModelInfo:
 
 
 AVAILABLE_MODELS: List[ModelInfo] = [
-    ModelInfo("openrouter", "meta-llama/llama-3.3-70b-instruct:free", "Llama 3.3 70B Instruct (Meta)", multimodal=False),
-    ModelInfo("openrouter", "openai/gpt-oss-120b:free", "GPT OSS 120B (OpenAI)", multimodal=False),
-    ModelInfo("openrouter", "deepseek/deepseek-r1-0528:free", "DeepSeek R1 0528", multimodal=False),
-    ModelInfo("openrouter", "qwen/qwen3-235b-a22b:free", "Qwen3 235B A22B (Alibaba)", multimodal=False),
-    ModelInfo("openrouter", "nvidia/nemotron-3-super-120b-a12b:free", "Nemotron 3 Super 120B (NVIDIA)", multimodal=False),
-    ModelInfo("openrouter", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "Nemotron 3 Nano Omni 30B (NVIDIA)", multimodal=True),
-    ModelInfo("openrouter", "google/gemma-3-27b-it:free", "Gemma 3 27B IT (Google)", multimodal=True),
-    ModelInfo("openrouter", "moonshotai/kimi-k2:free", "Kimi K2 (Moonshot AI)", multimodal=False),
-    ModelInfo("openrouter", "mistralai/mistral-7b-instruct:free", "Mistral 7B Instruct", multimodal=False),
-    ModelInfo("openrouter", "microsoft/phi-4:free", "Phi-4 (Microsoft)", multimodal=False),
-    ModelInfo("openrouter", "liquid/lfm-2.5-1.2b-thinking:free", "LFM 2.5 1.2B Thinking (Liquid)", multimodal=False),
-    ModelInfo("openrouter", "z-ai/glm-4.5-air:free", "GLM-4.5 Air (Z-AI)", multimodal=False),
-    ModelInfo("openrouter", "dots-studio/dots-3-note-preview:free", "Dots 3 Note Preview (Dots Studio)", multimodal=False),
-    ModelInfo("openrouter", "thinkingmachines/inkling:free", "Inkling (Thinking Machines)", multimodal=False),
-    ModelInfo("openrouter", "minimax/minimax-m2.7:free", "MiniMax M2.7", multimodal=False),
+    ModelInfo("openrouter", "openrouter/free", "Auto (any available free model)"),
+    ModelInfo("openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free", "Nemotron 3 Ultra 550B (NVIDIA)"),
+    ModelInfo("openrouter", "poolside/laguna-s-2.1:free", "Laguna S 2.1 (Poolside)"),
+    ModelInfo("openrouter", "dots-studio/dots-3-note-preview:free", "Dots 3 Note Preview (Dots Studio)"),
 ]
 
-DEFAULT_MODEL = next(m for m in AVAILABLE_MODELS if m.model_id == "dots-studio/dots-3-note-preview:free")
+DEFAULT_MODEL = next(m for m in AVAILABLE_MODELS if m.model_id == "openrouter/free")
 
 # If the primary LLM_MODEL call fails, these are tried in order as fallbacks.
 LLM_FALLBACK_MODELS: List[str] = [
+    "openrouter/free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "poolside/laguna-s-2.1:free",
     "dots-studio/dots-3-note-preview:free",
-    "thinkingmachines/inkling:free",
-    "minimax/minimax-m2.7:free",
 ]
+
+MODEL_ID_ALIASES = {
+    "gpt-oss-120b": "openrouter/free",
+    "openai/gpt-oss-120b:free": "openrouter/free",
+    "llama-3.3-70b": "openrouter/free",
+    "meta-llama/llama-3.3-70b-instruct:free": "openrouter/free",
+    "deepseek-r1": "openrouter/free",
+    "deepseek/deepseek-r1-0528:free": "openrouter/free",
+    "qwen3-235b": "openrouter/free",
+    "qwen/qwen3-235b-a22b:free": "openrouter/free",
+    "glm-4.5-air": "openrouter/free",
+    "z-ai/glm-4.5-air:free": "openrouter/free",
+    "gemma-3-27b": "openrouter/free",
+    "google/gemma-3-27b-it:free": "openrouter/free",
+    "nvidia/nemotron-3-super-120b-a12b:free": "openrouter/free",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": "openrouter/free",
+    "moonshotai/kimi-k2:free": "openrouter/free",
+    "mistralai/mistral-7b-instruct:free": "openrouter/free",
+    "microsoft/phi-4:free": "openrouter/free",
+    "liquid/lfm-2.5-1.2b-thinking:free": "openrouter/free",
+    "thinkingmachines/inkling:free": "openrouter/free",
+    "minimax/minimax-m2.7:free": "openrouter/free",
+}
 
 
 class Settings(BaseSettings):
@@ -90,9 +103,14 @@ settings = Settings()
 
 
 def model_chain(requested: str | None) -> List[str]:
-    """Ordered list of model IDs to try: the requested/default model first,
-    then the configured fallbacks, without duplicates."""
-    primary = requested or settings.LLM_MODEL
+    """Try the selected model, then OpenRouter's free-model router if it fails."""
+    if requested:
+        selected = MODEL_ID_ALIASES.get(requested, requested)
+        if selected == "openrouter/free":
+            return [selected]
+        return [selected, "openrouter/free"]
+
+    primary = settings.LLM_MODEL
     chain = [primary]
     for m in LLM_FALLBACK_MODELS:
         if m not in chain:

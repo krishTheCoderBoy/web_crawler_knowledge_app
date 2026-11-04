@@ -381,7 +381,7 @@ class AgentChatSession:
         for _iter in range(8):
             last_exc: Exception | None = None
             data = None
-            for candidate in model_chain(model):
+            for candidate in model_chain(model_id):
                 payload = {
                     "model": candidate,
                     "messages": messages,
@@ -398,7 +398,17 @@ class AgentChatSession:
                         json=payload,
                         timeout=120,
                     )
-                    resp.raise_for_status()
+                    if not resp.ok:
+                        try:
+                            error = resp.json().get("error", {})
+                            detail = error.get("message") or error.get("metadata", {}).get("raw")
+                        except (ValueError, AttributeError):
+                            detail = None
+                        detail = detail or resp.text or resp.reason
+                        raise RuntimeError(
+                            f"OpenRouter rejected model '{candidate}' "
+                            f"({resp.status_code}): {detail}"
+                        )
                     data = resp.json()
                     break
                 except Exception as exc:
